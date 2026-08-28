@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.LifecycleOwner
 import dev.propor.android.adapters.AndroidClockAdapter
 import dev.propor.android.adapters.CameraXCameraAdapter
+import dev.propor.android.adapters.FileSidecarStore
 import dev.propor.android.adapters.MlKitSceneVisionAdapter
 import dev.propor.android.adapters.SensorMotionAdapter
 import dev.propor.android.adapters.VibratorHapticAdapter
@@ -54,6 +55,7 @@ class ProporSession(
     private val vision = MlKitSceneVisionAdapter()
     private val motion = SensorMotionAdapter(context)
     private val haptics = VibratorHapticAdapter(context)
+    private val store = FileSidecarStore(context)
 
     private val fusion = HorizonFusion()
 
@@ -65,6 +67,16 @@ class ProporSession(
 
     private val _feedback = MutableStateFlow(LiveFeedback(CoachOutput.Silent(NOTHING)))
     val feedback: StateFlow<LiveFeedback> = _feedback.asStateFlow()
+
+    /**
+     * Inclinacion del ultimo frame procesado.
+     *
+     * Se guarda para poder anotarla en el expediente de la captura: el sesgo de inclinacion
+     * —"tuerces 1,2 grados a la derecha"— es la primera metrica del perfil del fotografo, y no
+     * se puede calcular a posteriori si no consta en cada foto.
+     */
+    @Volatile
+    private var lastTilt: Degrees? = null
 
     private val _guide = MutableStateFlow(GuideKind.THIRDS)
     val guide: StateFlow<GuideKind> = _guide.asStateFlow()
@@ -106,17 +118,28 @@ class ProporSession(
         evaluate.reset()
 
         return result.map { capture ->
-            capture.copy(
+            val enriched = capture.copy(
                 sidecar = capture.sidecar.copy(
                     adviceShown = shown,
                     adviceAccepted = accepted,
+                    tiltAtCapture = lastTilt,
                     subjectCenterX = reading.suggestedAnchor?.x?.value,
                     subjectCenterY = reading.suggestedAnchor?.y?.value,
                     visionModelVersion = vision.modelVersion,
                 ),
             )
+
+            // Persistir el expediente es lo que convierte esto en una app con memoria. Si
+            // falla, la foto ya esta guardada y el usuario no pierde nada: solo se pierde un
+            // dato de aprendizaje, y eso no justifica hacer fallar una captura.
+            store.attachSidecar(enriched.id, enriched.sidecar)
+
+            enriched
         }
     }
+
+    /** Expedientes recientes. Los usara la galeria y, mas adelante, el `ProfileLearner`. */
+    suspend fun recentCaptures() = store.recent()
 
     /**
      * Arranca el bucle del coach.
@@ -134,6 +157,7 @@ class ProporSession(
             _guide,
         ) { reading, tilt, guide ->
             val horizon = fusion.fuse(sensor = tilt, visual = reading.horizon)
+            lastTilt = horizon?.angle
             evaluate(
                 reading = reading.copy(horizon = horizon),
                 activeGuide = guide,
