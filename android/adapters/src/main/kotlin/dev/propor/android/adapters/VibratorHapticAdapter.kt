@@ -44,15 +44,25 @@ class VibratorHapticAdapter(context: Context) : HapticPort {
     private var driftExpiresAt: Long = 0L
 
     /**
-     * Atributos de la vibracion.
+     * Atributos de la vibracion: **accesibilidad, no respuesta tactil**.
      *
-     * Sin declararlos, algunas capas de fabricante tratan la vibracion como de uso desconocido
-     * y la filtran. Declarandola como respuesta tactil se comporta como espera el usuario: si
-     * tiene desactivada la respuesta hactica del sistema, no vibra, **y eso es correcto**.
+     * Es una decision de producto, no un detalle tecnico, y se tomo al reves la primera vez.
+     *
+     * Con `USAGE_TOUCH`, Android suprime la vibracion cuando el usuario tiene desactivada la
+     * respuesta tactil del sistema — la del teclado y los botones. Y eso, aqui, es equivocarse:
+     * quien apaga la vibracion del teclado **no esta diciendo** que no quiera que su camara le
+     * avise de que la foto sale torcida. Son dos cosas distintas que comparten un interruptor.
+     *
+     * Ademas hay una razon que zanja la discusion: el encuadre haptico para personas con baja
+     * vision (H6.3) es un canal de asistencia, no un adorno. Si un ajuste de teclado lo apagara,
+     * la funcion no existiria para quien mas la necesita.
+     *
+     * `USAGE_ACCESSIBILITY` es lo que el sistema define exactamente para esto. Quien no quiera
+     * la haptica de PROPOR la apaga en PROPOR, con su propio interruptor.
      */
     private val attributes: VibrationAttributes? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH)
+            VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ACCESSIBILITY)
         } else {
             null
         }
