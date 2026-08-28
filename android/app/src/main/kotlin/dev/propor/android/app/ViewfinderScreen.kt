@@ -67,7 +67,10 @@ import kotlinx.coroutines.launch
  * y por la mano.
  */
 @Composable
-fun ViewfinderScreen(modifier: Modifier = Modifier) {
+fun ViewfinderScreen(
+    onShowGuide: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -183,14 +186,35 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
                 .statusBarsPadding(),
         )
 
-        CoachSwitch(
-            enabled = coachOn,
-            onToggle = session::toggleCoach,
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .statusBarsPadding()
                 .padding(end = 16.dp, top = 8.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CoachSwitch(enabled = coachOn, onToggle = session::toggleCoach)
+
+            // Andamiaje de la prueba: se va con ProporFlags.SHOW_TEST_GUIDE.
+            if (ProporFlags.SHOW_TEST_GUIDE) {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(CircleShape)
+                        .background(ProporColors.SurfaceRaised.copy(alpha = 0.7f))
+                        .clickable(onClick = onShowGuide),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "?",
+                        color = ProporColors.TextSecondary,
+                        fontSize = 14.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
+            }
+        }
 
         Column(
             modifier = Modifier

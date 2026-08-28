@@ -1,5 +1,6 @@
 package dev.propor.android.app
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -8,7 +9,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 
 /**
  * Punto de entrada.
@@ -34,9 +40,38 @@ class ProporActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = ProporColors.Background,
                 ) {
-                    ViewfinderScreen()
+                    val context = LocalContext.current
+                    var showGuide by remember {
+                        mutableStateOf(ProporFlags.SHOW_TEST_GUIDE && !context.guideSeen())
+                    }
+
+                    if (showGuide) {
+                        TestGuideScreen(
+                            onStart = {
+                                context.markGuideSeen()
+                                showGuide = false
+                            },
+                        )
+                    } else {
+                        ViewfinderScreen(onShowGuide = { showGuide = true })
+                    }
                 }
             }
         }
     }
+}
+
+// --- Andamiaje de la fase de prueba. Se va con ProporFlags.SHOW_TEST_GUIDE. ---
+
+private const val PREFS = "propor_test"
+private const val KEY_GUIDE_SEEN = "guideSeen"
+
+private fun Context.guideSeen(): Boolean =
+    getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_GUIDE_SEEN, false)
+
+private fun Context.markGuideSeen() {
+    getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(KEY_GUIDE_SEEN, true)
+        .apply()
 }
