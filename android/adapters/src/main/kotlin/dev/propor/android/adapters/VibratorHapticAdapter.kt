@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.os.VibrationAttributes
 import android.os.VibratorManager
 import dev.propor.core.domain.advice.HapticSignal
 import dev.propor.core.domain.port.HapticPort
@@ -38,6 +39,24 @@ class VibratorHapticAdapter(context: Context) : HapticPort {
                 VibrationEffect.Composition.PRIMITIVE_QUICK_RISE,
             ) == true
 
+    /** Ultimo DRIFT enviado: intensidad y cuando caduca. Ver [drift]. */
+    private var driftIntensity: Float = -1f
+    private var driftExpiresAt: Long = 0L
+
+    /**
+     * Atributos de la vibracion.
+     *
+     * Sin declararlos, algunas capas de fabricante tratan la vibracion como de uso desconocido
+     * y la filtran. Declarandola como respuesta tactil se comporta como espera el usuario: si
+     * tiene desactivada la respuesta hactica del sistema, no vibra, **y eso es correcto**.
+     */
+    private val attributes: VibrationAttributes? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH)
+        } else {
+            null
+        }
+
     override val isAvailable: Boolean
         get() = vibrator?.hasVibrator() == true
 
@@ -57,6 +76,18 @@ class VibratorHapticAdapter(context: Context) : HapticPort {
 
     override fun stop() {
         vibrator?.cancel()
+        driftIntensity = -1f
+        driftExpiresAt = 0L
+    }
+
+    /** Un unico punto de salida, para que todas las senales lleven los mismos atributos. */
+    private fun Vibrator.emit(effect: VibrationEffect) {
+        if (attributes != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            vibrate(effect, attributes)
+        } else {
+            @Suppress("DEPRECATION")
+            vibrate(effect)
+        }
     }
 
     // ------------------------------------------------------------------ senales
@@ -64,27 +95,27 @@ class VibratorHapticAdapter(context: Context) : HapticPort {
     /** Un golpe seco y ligero: cruzaste una linea de la guia. */
     private fun tick(device: Vibrator) {
         if (supportsPrimitives) {
-            device.vibrate(
+            device.emit(
                 VibrationEffect.startComposition()
                     .addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK, 0.6f)
                     .compose(),
             )
         } else {
-            device.vibrate(oneShot(durationMs = 12, amplitude = 90))
+            device.emit(oneShot(durationMs = 12, amplitude = 90))
         }
     }
 
     /** Dos golpes rapidos: alineado. Es la unica confirmacion positiva del vocabulario. */
     private fun lock(device: Vibrator) {
         if (supportsPrimitives) {
-            device.vibrate(
+            device.emit(
                 VibrationEffect.startComposition()
                     .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.7f)
                     .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 0.9f, 60)
                     .compose(),
             )
         } else {
-            device.vibrate(waveform(longArrayOf(0, 18, 55, 22), intArrayOf(0, 140, 0, 190)))
+            device.emit(waveform(longArrayOf(0, 18, 55, 22), intArrayOf(0, 140, 0, 190)))
         }
     }
 
@@ -96,39 +127,59 @@ class VibratorHapticAdapter(context: Context) : HapticPort {
      * de dos sitios y acabaria divergiendo entre plataformas.
      */
     private fun drift(device: Vibrator, intensity: Float) {
-        val amplitude = (40 + intensity.coerceIn(0f, 1f) * 150).toInt().coerceIn(1, 255)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && device.hasAmplitudeControl()) {
-            device.vibrate(VibrationEffect.createOneShot(120, amplitude))
+        val now = android.os.SystemClock.elapsedRealtime()
+        val clamped = intensity.coerceIn(0f, 1f)
+
+        // El dominio emite la senal continua en CADA frame mientras el error persiste: a 30 fps
+        // son treinta llamadas por segundo. Reenviar el efecto cada vez **cancela el anterior
+        // antes de que el motor llegue a expresarlo**, y el resultado es silencio o un runruneo
+        // sordo. Es exactamente el fallo que solo aparece con el telefono en la mano.
+        //
+        // Aqui se renueva solo cuando el efecto anterior esta acabando, o cuando la intensidad
+        // cambia lo bastante como para que se note.
+        val stillRunning = now < driftExpiresAt
+        val sameIntensity = kotlin.math.abs(clamped - driftIntensity) < DRIFT_INTENSITY_STEP
+        if (stillRunning && sameIntensity) return
+
+        val amplitude = (70 + clamped * 185).toInt().coerceIn(1, 255)
+        val effect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            device.hasAmplitudeControl()
+        ) {
+            VibrationEffect.createOneShot(DRIFT_DURATION_MS, amplitude)
         } else {
             // Sin control de amplitud, la intensidad se traduce a duracion: es lo unico que queda.
-            device.vibrate(oneShot(durationMs = (40 + intensity * 120).toLong(), amplitude = 255))
+            VibrationEffect.createOneShot((60 + clamped * 140).toLong().coerceAtLeast(1), 255)
         }
+
+        device.emit(effect)
+        driftIntensity = clamped
+        driftExpiresAt = now + DRIFT_DURATION_MS - DRIFT_RENEW_MARGIN_MS
     }
 
     /** Golpe fuerte: algo importante se sale del encuadre. */
     private fun edge(device: Vibrator) {
         if (supportsPrimitives) {
-            device.vibrate(
+            device.emit(
                 VibrationEffect.startComposition()
                     .addPrimitive(VibrationEffect.Composition.PRIMITIVE_CLICK, 1.0f)
                     .compose(),
             )
         } else {
-            device.vibrate(oneShot(durationMs = 45, amplitude = 255))
+            device.emit(oneShot(durationMs = 45, amplitude = 255))
         }
     }
 
     /** Subida suave: todo alineado, dispara. */
     private fun ready(device: Vibrator) {
         if (supportsPrimitives) {
-            device.vibrate(
+            device.emit(
                 VibrationEffect.startComposition()
                     .addPrimitive(VibrationEffect.Composition.PRIMITIVE_QUICK_RISE, 0.8f)
                     .compose(),
             )
         } else {
             // Rampa a mano: sin primitivas es lo mas parecido a una subida.
-            device.vibrate(
+            device.emit(
                 waveform(
                     timings = longArrayOf(0, 40, 40, 40, 40),
                     amplitudes = intArrayOf(0, 60, 110, 170, 230),
@@ -139,7 +190,7 @@ class VibratorHapticAdapter(context: Context) : HapticPort {
 
     /** Doble golpe seco: captura confirmada. */
     private fun shutter(device: Vibrator) {
-        device.vibrate(waveform(longArrayOf(0, 14, 40, 14), intArrayOf(0, 200, 0, 200)))
+        device.emit(waveform(longArrayOf(0, 14, 40, 14), intArrayOf(0, 200, 0, 200)))
     }
 
     // ------------------------------------------------------------------ util
@@ -149,6 +200,17 @@ class VibratorHapticAdapter(context: Context) : HapticPort {
 
     private fun waveform(timings: LongArray, amplitudes: IntArray): VibrationEffect =
         VibrationEffect.createWaveform(timings, amplitudes, -1)
+
+    private companion object {
+        /** Duracion de cada pulso de la senal continua. */
+        const val DRIFT_DURATION_MS = 260L
+
+        /** Margen para encadenar el siguiente pulso sin que se note el corte. */
+        const val DRIFT_RENEW_MARGIN_MS = 40L
+
+        /** Cambio de intensidad por debajo del cual no merece la pena reenviar nada. */
+        const val DRIFT_INTENSITY_STEP = 0.12f
+    }
 
     private fun resolveVibrator(context: Context): Vibrator? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

@@ -13,6 +13,10 @@ import dev.propor.core.domain.advice.AdviceEngine
 import dev.propor.core.domain.advice.AdviceThrottler
 import dev.propor.core.domain.advice.CoachOutput
 import dev.propor.core.domain.advice.CoachProfile
+import dev.propor.core.domain.advice.HapticSignal
+import dev.propor.core.domain.capture.Capture
+import dev.propor.core.domain.capture.CaptureIntent
+import dev.propor.core.domain.capture.CaptureSidecar
 import dev.propor.core.domain.geometry.AspectRatio
 import dev.propor.core.domain.geometry.Degrees
 import dev.propor.core.domain.guide.GuideKind
@@ -76,6 +80,42 @@ class ProporSession(
 
     fun selectGuide(kind: GuideKind) {
         _guide.value = kind
+    }
+
+    /**
+     * Dispara.
+     *
+     * El expediente de la foto se construye **con lo que de verdad paso durante el encuadre**:
+     * que consejos llego a ver el usuario y cuales atendio. Esa es la materia prima del perfil
+     * del fotografo (E9), y por eso se recoge desde R1 aunque el perfil llegue despues: sin
+     * historial no se puede reconstruir hacia atras.
+     */
+    suspend fun capture(): Result<Capture> {
+        val (shown, accepted) = evaluate.sessionAdvice()
+        val reading = _feedback.value
+
+        val result = camera.capture(
+            CaptureIntent(activeGuide = _guide.value, aspect = aspect),
+        )
+
+        result.onSuccess {
+            if (hapticsEnabled) haptics.play(HapticSignal.Shutter)
+        }
+
+        // Cada captura cierra un ciclo de encuadre: los consejos de la siguiente foto son otros.
+        evaluate.reset()
+
+        return result.map { capture ->
+            capture.copy(
+                sidecar = capture.sidecar.copy(
+                    adviceShown = shown,
+                    adviceAccepted = accepted,
+                    subjectCenterX = reading.suggestedAnchor?.x?.value,
+                    subjectCenterY = reading.suggestedAnchor?.y?.value,
+                    visionModelVersion = vision.modelVersion,
+                ),
+            )
+        }
     }
 
     /**

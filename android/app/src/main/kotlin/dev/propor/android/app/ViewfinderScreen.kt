@@ -38,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -84,6 +85,9 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) {
         if (!hasPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
     }
+
+    var capturing by remember { mutableStateOf(false) }
+    var lastShotFailed by remember { mutableStateOf(false) }
 
     val session = remember(lifecycleOwner) {
         ProporSession(context = context, lifecycleOwner = lifecycleOwner, scope = scope)
@@ -181,7 +185,18 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
                 onSelect = session::selectGuide,
                 modifier = Modifier.fillMaxWidth(),
             )
-            ShutterButton(modifier = Modifier.padding(top = 20.dp))
+            ShutterButton(
+                enabled = hasPermission && !capturing,
+                onClick = {
+                    capturing = true
+                    scope.launch {
+                        val result = session.capture()
+                        capturing = false
+                        lastShotFailed = result.isFailure
+                    }
+                },
+                modifier = Modifier.padding(top = 20.dp),
+            )
         }
     }
 }
@@ -267,12 +282,26 @@ private fun GuidePicker(
 }
 
 @Composable
-private fun ShutterButton(modifier: Modifier = Modifier) {
+private fun ShutterButton(
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Encoge al pulsar. Es la unica confirmacion visual del disparo: un destello a pantalla
+    // completa arruinaria la adaptacion del ojo, que es justo lo que no se le hace a alguien
+    // que esta componiendo.
+    val scale by animateFloatAsState(
+        targetValue = if (enabled) 1f else 0.88f,
+        label = "shutter-scale",
+    )
+
     Box(
         modifier = modifier
             .size(72.dp)
+            .scale(scale)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.92f)),
+            .background(Color.White.copy(alpha = if (enabled) 0.92f else 0.45f))
+            .clickable(enabled = enabled, onClick = onClick),
     )
 }
 
