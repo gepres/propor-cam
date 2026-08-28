@@ -95,7 +95,7 @@ object GuideGeometryFactory {
 
         GuideKind.TRIANGLES -> triangles(aspect)
 
-        GuideKind.GOLDEN_SPIRAL -> goldenSpiral(corner)
+        GuideKind.GOLDEN_SPIRAL -> goldenSpiral(corner, aspect)
 
         GuideKind.SYMMETRY -> GuideGeometry(
             kind = kind,
@@ -190,8 +190,13 @@ object GuideGeometryFactory {
      *
      * [corner] nombra DONDE CONVERGE la espiral, que es donde va el sujeto. Es lo que le
      * importa al fotografo, no en que esquina empieza el dibujo.
+     *
+     * En encuadre **vertical** la espiral se transpone. El rectangulo aureo canonico es
+     * apaisado; estirarlo sin mas a un 3:4 convierte los arcos en elipses altisimas y la figura
+     * deja de comunicar la proporcion aurea: parece un ovalo. Esto solo se ve ejecutando, no
+     * leyendo el codigo.
      */
-    private fun goldenSpiral(corner: SpiralCorner): GuideGeometry {
+    private fun goldenSpiral(corner: SpiralCorner, aspect: AspectRatio): GuideGeometry {
         var x = 0f
         var y = 0f
         var w = PHI
@@ -200,21 +205,32 @@ object GuideGeometryFactory {
         val curve = mutableListOf<NormPoint>()
         val squares = mutableListOf<Segment>()
 
+        val portrait = aspect.isPortrait
+
+        /** Del espacio canonico (0..phi en x, 0..1 en y) al normalizado del encuadre. */
+        fun toNorm(px: Float, py: Float): NormPoint {
+            val nx = px / PHI
+            return if (portrait) {
+                NormPoint.clamped(py, nx)
+            } else {
+                NormPoint.clamped(nx, py)
+            }
+        }
+
         fun push(px: Float, py: Float) {
-            // De x en espacio canonico (0..phi) a normalizado (0..1).
-            curve += reflect(NormPoint.clamped(px / PHI, py), corner)
+            curve += reflect(toNorm(px, py), corner)
         }
 
         fun pushSquare(sx: Float, sy: Float, side: Float) {
-            val l = sx / PHI
-            val r = (sx + side) / PHI
-            val t = sy
-            val b = sy + side
+            val topLeft = toNorm(sx, sy)
+            val topRight = toNorm(sx + side, sy)
+            val bottomRight = toNorm(sx + side, sy + side)
+            val bottomLeft = toNorm(sx, sy + side)
             listOf(
-                Segment(NormPoint.clamped(l, t), NormPoint.clamped(r, t)),
-                Segment(NormPoint.clamped(r, t), NormPoint.clamped(r, b)),
-                Segment(NormPoint.clamped(r, b), NormPoint.clamped(l, b)),
-                Segment(NormPoint.clamped(l, b), NormPoint.clamped(l, t)),
+                Segment(topLeft, topRight),
+                Segment(topRight, bottomRight),
+                Segment(bottomRight, bottomLeft),
+                Segment(bottomLeft, topLeft),
             ).forEach { squares += reflect(it, corner) }
         }
 

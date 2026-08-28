@@ -4,9 +4,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import dev.propor.core.domain.geometry.NormPoint
@@ -19,8 +19,13 @@ import dev.propor.core.domain.guide.GuideGeometry
  * tamano real. **No calcula nada**: si esta capa tuviera que saber que es la proporcion aurea,
  * la regla acabaria escrita dos veces y divergiendo entre plataformas.
  *
- * Version en Canvas. El paso a shader (AGSL) llega con H3.2 y hara falta cuando se anada el
- * contraste adaptativo, que necesita muestrear la luminancia del frame por debajo de cada tramo.
+ * La conversion de normalizado a pixeles se hace **explicitamente** con [scaledTo] y nunca
+ * envolviendo `drawLine` en una extension del mismo nombre: los metodos miembro de `DrawScope`
+ * ganan a las extensiones, asi que una extension homonima jamas se llegaria a llamar y las
+ * lineas se dibujarian dentro de un cuadrado de un pixel en la esquina, sin error ninguno.
+ *
+ * Version en Canvas. El paso a shader (AGSL) llega con H3.2 y hara falta para el contraste
+ * adaptativo, que necesita muestrear la luminancia del frame bajo cada tramo.
  */
 @Composable
 fun GuideOverlay(
@@ -37,8 +42,8 @@ fun GuideOverlay(
         geometry.segments.forEach { segment ->
             drawLine(
                 color = lineColor,
-                start = segment.from.toOffset(),
-                end = segment.to.toOffset(),
+                start = segment.from.scaledTo(size),
+                end = segment.to.scaledTo(size),
                 strokeWidth = strokeWidth,
             )
         }
@@ -46,9 +51,11 @@ fun GuideOverlay(
         geometry.curves.forEach { points ->
             if (points.size < 2) return@forEach
             val path = Path().apply {
-                moveTo(points.first().x.value * size.width, points.first().y.value * size.height)
-                points.drop(1).forEach { p ->
-                    lineTo(p.x.value * size.width, p.y.value * size.height)
+                val first = points.first().scaledTo(size)
+                moveTo(first.x, first.y)
+                points.drop(1).forEach { point ->
+                    val offset = point.scaledTo(size)
+                    lineTo(offset.x, offset.y)
                 }
             }
             drawPath(path, color = lineColor, style = Stroke(width = strokeWidth * 1.4f))
@@ -60,8 +67,8 @@ fun GuideOverlay(
             drawCircle(
                 color = if (isHighlighted) anchorColor else lineColor,
                 radius = if (isHighlighted) 7.dp.toPx() else 3.dp.toPx(),
-                center = anchor.toOffset(),
-                alpha = if (isHighlighted) 1f else 0.7f,
+                center = anchor.scaledTo(size),
+                alpha = if (isHighlighted) 1f else 0.75f,
             )
         }
     }
@@ -83,46 +90,24 @@ fun CoachIndicator(
     Canvas(modifier = modifier) {
         val trackWidth = 3.dp.toPx()
         val x = size.width - trackWidth
-        val height = size.height * 0.4f
-        val top = (size.height - height) / 2f
+        val trackHeight = size.height * 0.4f
+        val top = (size.height - trackHeight) / 2f
 
         drawLine(
             color = color.copy(alpha = 0.15f),
             start = Offset(x, top),
-            end = Offset(x, top + height),
+            end = Offset(x, top + trackHeight),
             strokeWidth = trackWidth,
         )
         drawLine(
             color = color,
-            start = Offset(x, top + height),
-            end = Offset(x, top + height * (1f - progress.coerceIn(0f, 1f))),
+            start = Offset(x, top + trackHeight),
+            end = Offset(x, top + trackHeight * (1f - progress.coerceIn(0f, 1f))),
             strokeWidth = trackWidth,
         )
     }
 }
 
-private fun NormPoint.toOffset(): Offset = Offset(x.value, y.value)
-
-private fun DrawScope.drawLine(
-    color: Color,
-    start: Offset,
-    end: Offset,
-    strokeWidth: Float,
-) = drawLine(
-    color = color,
-    start = Offset(start.x * size.width, start.y * size.height),
-    end = Offset(end.x * size.width, end.y * size.height),
-    strokeWidth = strokeWidth,
-)
-
-private fun DrawScope.drawCircle(
-    color: Color,
-    radius: Float,
-    center: Offset,
-    alpha: Float,
-) = drawCircle(
-    color = color,
-    radius = radius,
-    center = Offset(center.x * size.width, center.y * size.height),
-    alpha = alpha,
-)
+/** De coordenada normalizada del dominio a pixeles de pantalla. La unica conversion que hay. */
+private fun NormPoint.scaledTo(size: Size): Offset =
+    Offset(x.value * size.width, y.value * size.height)

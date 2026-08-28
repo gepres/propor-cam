@@ -228,6 +228,34 @@ class GuideGeometryFactoryTest {
         }
     }
 
+    /**
+     * En encuadre vertical la espiral se transpone.
+     *
+     * El rectangulo aureo canonico es apaisado. Estirarlo sin mas a un 3:4 convierte los arcos
+     * en elipses altisimas y la figura deja de leerse como una espiral aurea. Este test existe
+     * porque el fallo era invisible en el codigo y solo salio al mirar la pantalla.
+     */
+    @Test
+    fun espiral_seTransponeEnEncuadreVertical() {
+        val apaisado = GuideGeometryFactory
+            .geometryFor(GuideKind.GOLDEN_SPIRAL, AspectRatio.R4_3)
+            .curves.single()
+        val vertical = GuideGeometryFactory
+            .geometryFor(GuideKind.GOLDEN_SPIRAL, AspectRatio.R4_3.rotated())
+            .curves.single()
+
+        assertEquals(apaisado.size, vertical.size)
+
+        // Cada punto del vertical es el del apaisado con las coordenadas intercambiadas.
+        apaisado.indices.forEach { i ->
+            assertTrue(
+                abs(apaisado[i].x.value - vertical[i].y.value) < 1e-4f &&
+                    abs(apaisado[i].y.value - vertical[i].x.value) < 1e-4f,
+                "punto $i sin transponer: ${apaisado[i]} frente a ${vertical[i]}",
+            )
+        }
+    }
+
     // ------------------------------------------------------------------ util
 
     private fun close(p: NormPoint, x: Float, y: Float, tol: Float = 1e-4f): Boolean =

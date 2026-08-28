@@ -75,8 +75,13 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
     // La regla de tercios ya viene puesta: se entra al visor y se dispara, sin tour ni ajustes.
     var activeGuide by remember { mutableStateOf(GuideKind.THIRDS) }
 
-    val geometry = remember(activeGuide) {
-        GuideGeometryFactory.geometryFor(activeGuide, AspectRatio.R4_3)
+    // El visor es vertical, asi que el aspecto que se pasa tambien: 3:4 y no 4:3. Las guias que
+    // dependen de la forma del rectangulo —triangulos y espiral— dan geometrias distintas segun
+    // la orientacion, y pasar la equivocada dibuja una figura que no corresponde a la escena.
+    val viewfinderAspect = remember { AspectRatio.R4_3.rotated() }
+
+    val geometry = remember(activeGuide, viewfinderAspect) {
+        GuideGeometryFactory.geometryFor(activeGuide, viewfinderAspect)
     }
 
     Box(
@@ -96,10 +101,13 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
             )
         }
 
-        // La guia se dibuja sobre el area util del visor, con la proporcion real de la captura.
+        // La guia tiene que caer EXACTAMENTE sobre la imagen, no sobre la pantalla. Como la
+        // previsualizacion usa FIT_CENTER, queda centrada verticalmente con bandas negras
+        // arriba y abajo; alinear el overlay arriba lo desplazaria respecto a la escena y las
+        // lineas mentirian sobre donde cae cada tercio.
         Box(
             modifier = Modifier
-                .align(Alignment.TopCenter)
+                .align(Alignment.Center)
                 .fillMaxWidth()
                 .aspectRatio(3f / 4f),
         ) {
