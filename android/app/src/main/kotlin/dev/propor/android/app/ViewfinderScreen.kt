@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -157,13 +159,21 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
             )
         }
 
-        TechnicalBar(modifier = Modifier.align(Alignment.TopStart))
+        // Los insets del sistema no son un detalle cosmetico aqui: sin ellos la barra tecnica
+        // se dibuja ENCIMA de la hora y la bateria, y los valores de exposicion quedan
+        // ilegibles. El emulador no lo mostro porque su barra de estado va casi vacia.
+        TechnicalBar(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding(),
+        )
 
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(bottom = 28.dp),
+                .navigationBarsPadding()
+                .padding(bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             GuidePicker(
