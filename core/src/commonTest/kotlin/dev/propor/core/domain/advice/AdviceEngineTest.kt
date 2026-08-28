@@ -1,6 +1,7 @@
 package dev.propor.core.domain.advice
 
 import dev.propor.core.domain.geometry.AspectRatio
+import dev.propor.core.domain.geometry.Confidence
 import dev.propor.core.domain.geometry.Degrees
 import dev.propor.core.domain.geometry.NormPoint
 import dev.propor.core.domain.geometry.NormRect
@@ -67,6 +68,19 @@ class AdviceEngineTest {
         assertEquals(1f, advice.magnitude)
         // Es lo mas barato de corregir: un giro de muneca.
         assertEquals(CorrectionCost.WRIST, advice.cost)
+    }
+
+    /**
+     * Con el telefono en movimiento, la fusion rebaja la confianza del horizonte y el coach
+     * tiene que callarse: el encuadre aun esta cambiando y opinar sobre el seria opinar sobre
+     * algo que va a ser distinto dentro de medio segundo.
+     */
+    @Test
+    fun horizonte_conConfianzaBaja_noSeAvisa() {
+        val reading = SceneReading(
+            horizon = HorizonReading(Degrees(9f), confidence = Confidence(0.5f)),
+        )
+        assertTrue(engine.advise(reading, GuideKind.THIRDS).isEmpty())
     }
 
     // ------------------------------------------------------------------ 2. sujeto centrado

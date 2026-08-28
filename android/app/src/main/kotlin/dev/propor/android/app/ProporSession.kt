@@ -1,0 +1,124 @@
+package dev.propor.android.app
+
+import android.content.Context
+import androidx.lifecycle.LifecycleOwner
+import dev.propor.android.adapters.AndroidClockAdapter
+import dev.propor.android.adapters.CameraXCameraAdapter
+import dev.propor.android.adapters.MlKitSceneVisionAdapter
+import dev.propor.android.adapters.SensorMotionAdapter
+import dev.propor.android.adapters.VibratorHapticAdapter
+import dev.propor.core.application.usecase.EvaluateLiveFrame
+import dev.propor.core.application.usecase.LiveFeedback
+import dev.propor.core.domain.advice.AdviceEngine
+import dev.propor.core.domain.advice.AdviceThrottler
+import dev.propor.core.domain.advice.CoachOutput
+import dev.propor.core.domain.advice.CoachProfile
+import dev.propor.core.domain.geometry.AspectRatio
+import dev.propor.core.domain.geometry.Degrees
+import dev.propor.core.domain.guide.GuideKind
+import dev.propor.core.domain.port.DeviceTilt
+import dev.propor.core.domain.scene.HorizonFusion
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.launch
+
+/**
+ * La composicion raiz de la sesion de visor.
+ *
+ * **Es el unico sitio del proyecto donde se conocen todas las piezas.** Aqui se enchufan los
+ * adaptadores concretos a los puertos del dominio; en cualquier otro lugar solo se ven
+ * interfaces. Por eso el adaptador de camara y el de vision no se importan entre si: se
+ * encuentran exclusivamente en esta clase.
+ *
+ * Cambiar ML Kit por otro detector, o CameraX por Camera2 puro, se hace modificando estas
+ * lineas y nada mas.
+ */
+class ProporSession(
+    context: Context,
+    lifecycleOwner: LifecycleOwner,
+    private val scope: CoroutineScope,
+) {
+    val camera = CameraXCameraAdapter(context = context, lifecycleOwner = lifecycleOwner)
+
+    private val vision = MlKitSceneVisionAdapter()
+    private val motion = SensorMotionAdapter(context)
+    private val haptics = VibratorHapticAdapter(context)
+
+    private val fusion = HorizonFusion()
+
+    private val evaluate = EvaluateLiveFrame(
+        engine = AdviceEngine(),
+        throttler = AdviceThrottler(AndroidClockAdapter),
+        haptics = haptics,
+    )
+
+    private val _feedback = MutableStateFlow(LiveFeedback(CoachOutput.Silent(NOTHING)))
+    val feedback: StateFlow<LiveFeedback> = _feedback.asStateFlow()
+
+    private val _guide = MutableStateFlow(GuideKind.THIRDS)
+    val guide: StateFlow<GuideKind> = _guide.asStateFlow()
+
+    var hapticsEnabled: Boolean = true
+    var aspect: AspectRatio = AspectRatio.R4_3.rotated()
+    var profile: CoachProfile = CoachProfile.NEUTRAL
+
+    init {
+        // El analizador se inyecta desde fuera: es lo que mantiene desacoplados camara y vision.
+        camera.attachAnalyzer(vision)
+    }
+
+    fun selectGuide(kind: GuideKind) {
+        _guide.value = kind
+    }
+
+    /**
+     * Arranca el bucle del coach.
+     *
+     * El sensor arranca con un valor por defecto para que la combinacion emita desde el primer
+     * frame: si se esperase a la primera lectura del giroscopio, el visor se quedaria sin coach
+     * durante los primeros milisegundos y el usuario lo notaria como un arranque en falso.
+     */
+    fun start() {
+        scope.launch { motion.start() }
+
+        combine(
+            vision.readings,
+            motion.tilt.onStart { emit(DeviceTilt(Degrees.ZERO, Degrees.ZERO)) },
+            _guide,
+        ) { reading, tilt, guide ->
+            val horizon = fusion.fuse(sensor = tilt, visual = reading.horizon)
+            evaluate(
+                reading = reading.copy(horizon = horizon),
+                activeGuide = guide,
+                aspect = aspect,
+                profile = profile,
+                hapticsEnabled = hapticsEnabled,
+            )
+        }
+            .onEach { _feedback.value = it }
+            .launchIn(scope)
+    }
+
+    suspend fun stop() {
+        motion.stop()
+        camera.close()
+        evaluate.reset()
+        fusion.reset()
+    }
+
+    fun release() {
+        vision.release()
+        camera.release()
+    }
+
+    private companion object {
+        val NOTHING = dev.propor.core.domain.advice.SilenceReason.NOTHING_TO_SAY
+    }
+}

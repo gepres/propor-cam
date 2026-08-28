@@ -5,27 +5,33 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,7 +45,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import dev.propor.android.adapters.CameraXCameraAdapter
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.propor.core.domain.geometry.AspectRatio
 import dev.propor.core.domain.guide.GuideGeometryFactory
 import dev.propor.core.domain.guide.GuideKind
@@ -51,11 +57,16 @@ import kotlinx.coroutines.launch
  * Principio rector: **el visor es sagrado**. La escena ocupa toda la pantalla y los controles
  * viven en los bordes, en los dos tercios inferiores, dentro del arco del pulgar. Se fotografia
  * a una mano y muchas veces en equilibrio precario.
+ *
+ * Y el principio que gobierna el coach: **nunca se lee mientras se compone**. Aqui no hay ni un
+ * texto de aviso. Lo que el coach tiene que decir llega por el ancla ambar, por el arco lateral
+ * y por la mano.
  */
 @Composable
 fun ViewfinderScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
     var hasPermission by remember {
         mutableStateOf(
@@ -72,17 +83,36 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
         if (!hasPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
-    // La regla de tercios ya viene puesta: se entra al visor y se dispara, sin tour ni ajustes.
-    var activeGuide by remember { mutableStateOf(GuideKind.THIRDS) }
+    val session = remember(lifecycleOwner) {
+        ProporSession(context = context, lifecycleOwner = lifecycleOwner, scope = scope)
+    }
+
+    DisposableEffect(session) {
+        session.start()
+        onDispose {
+            scope.launch { session.stop() }
+            session.release()
+        }
+    }
+
+    val guide by session.guide.collectAsStateWithLifecycle()
+    val feedback by session.feedback.collectAsStateWithLifecycle()
 
     // El visor es vertical, asi que el aspecto que se pasa tambien: 3:4 y no 4:3. Las guias que
     // dependen de la forma del rectangulo —triangulos y espiral— dan geometrias distintas segun
     // la orientacion, y pasar la equivocada dibuja una figura que no corresponde a la escena.
     val viewfinderAspect = remember { AspectRatio.R4_3.rotated() }
 
-    val geometry = remember(activeGuide, viewfinderAspect) {
-        GuideGeometryFactory.geometryFor(activeGuide, viewfinderAspect)
+    val geometry = remember(guide, viewfinderAspect) {
+        GuideGeometryFactory.geometryFor(guide, viewfinderAspect)
     }
+
+    // El arco no salta: se desliza. Un indicador que brinca roba la mirada, que es justo lo que
+    // este elemento existe para evitar.
+    val alignment by animateFloatAsState(
+        targetValue = feedback.alignment,
+        label = "coach-alignment",
+    )
 
     Box(
         modifier = modifier
@@ -90,10 +120,7 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
             .background(ProporColors.Background),
     ) {
         if (hasPermission) {
-            CameraSurface(
-                lifecycleOwner = lifecycleOwner,
-                modifier = Modifier.fillMaxSize(),
-            )
+            CameraSurface(session = session, modifier = Modifier.fillMaxSize())
         } else {
             PermissionNotice(
                 onRequest = { permissionLauncher.launch(Manifest.permission.CAMERA) },
@@ -111,7 +138,23 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
                 .fillMaxWidth()
                 .aspectRatio(3f / 4f),
         ) {
-            GuideOverlay(geometry = geometry, modifier = Modifier.fillMaxSize())
+            GuideOverlay(
+                geometry = geometry,
+                highlightedAnchor = feedback.suggestedAnchor,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        // Solo aparece cuando el coach tiene algo que decir. El resto del tiempo, nada: el
+        // silencio es el estado normal y ocupa entre el 60 % y el 80 % de la sesion.
+        if (feedback.isSpeaking) {
+            CoachIndicator(
+                progress = alignment,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .width(24.dp),
+            )
         }
 
         TechnicalBar(modifier = Modifier.align(Alignment.TopStart))
@@ -124,8 +167,8 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             GuidePicker(
-                active = activeGuide,
-                onSelect = { activeGuide = it },
+                active = guide,
+                onSelect = session::selectGuide,
                 modifier = Modifier.fillMaxWidth(),
             )
             ShutterButton(modifier = Modifier.padding(top = 20.dp))
@@ -134,16 +177,8 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun CameraSurface(
-    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-
-    val adapter = remember(lifecycleOwner) {
-        CameraXCameraAdapter(context = context, lifecycleOwner = lifecycleOwner)
-    }
+private fun CameraSurface(session: ProporSession, modifier: Modifier = Modifier) {
+    val scope = rememberCoroutineScope()
 
     AndroidView(
         modifier = modifier,
@@ -156,8 +191,8 @@ private fun CameraSurface(
             }
         },
         update = { view ->
-            adapter.attachPreview(view.surfaceProvider)
-            scope.launch { adapter.open() }
+            session.camera.attachPreview(view.surfaceProvider)
+            scope.launch { session.camera.open() }
         },
     )
 }
@@ -196,7 +231,7 @@ private fun GuidePicker(
 ) {
     LazyRow(
         modifier = modifier,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(GuideKind.R1) { kind ->

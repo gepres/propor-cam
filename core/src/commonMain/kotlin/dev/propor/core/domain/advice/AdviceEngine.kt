@@ -1,6 +1,7 @@
 package dev.propor.core.domain.advice
 
 import dev.propor.core.domain.geometry.AspectRatio
+import dev.propor.core.domain.geometry.Confidence
 import dev.propor.core.domain.geometry.NormPoint
 import dev.propor.core.domain.geometry.NormRect
 import dev.propor.core.domain.guide.GuideGeometryFactory
@@ -77,6 +78,10 @@ class AdviceEngine(private val config: AdviceConfig = AdviceConfig()) {
 
     private fun tiltedHorizon(reading: SceneReading): Advice? {
         val horizon = reading.horizon ?: return null
+        // Cada regla respeta la fiabilidad de SU senal. La confianza global de la escena dice
+        // si la lectura sirve en conjunto; esta dice si el horizonte concreto es de fiar, y
+        // con el telefono en movimiento no lo es.
+        if (horizon.confidence < Confidence.COACH_THRESHOLD) return null
         val deg = abs(horizon.angle.value)
         if (deg <= config.maxTiltDeg) return null
         val span = (config.tiltSaturationDeg - config.maxTiltDeg).coerceAtLeast(0.001f)
