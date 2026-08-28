@@ -81,6 +81,16 @@ class ProporSession(
     private val _guide = MutableStateFlow(GuideKind.THIRDS)
     val guide: StateFlow<GuideKind> = _guide.asStateFlow()
 
+    /**
+     * Si el coach esta encendido.
+     *
+     * Apagarlo deja las guias solas, es decir convierte PROPOR en una camara con rejillas
+     * normal. Existe porque **la pregunta que decide el producto es si la gente lo apaga**, y
+     * sin interruptor esa pregunta no se puede contestar.
+     */
+    private val _coachEnabled = MutableStateFlow(true)
+    val coachEnabled: StateFlow<Boolean> = _coachEnabled.asStateFlow()
+
     var hapticsEnabled: Boolean = true
     var aspect: AspectRatio = AspectRatio.R4_3.rotated()
     var profile: CoachProfile = CoachProfile.NEUTRAL
@@ -94,6 +104,18 @@ class ProporSession(
         _guide.value = kind
     }
 
+    fun toggleCoach() {
+        val enabled = !_coachEnabled.value
+        _coachEnabled.value = enabled
+        if (!enabled) {
+            haptics.stop()
+            _feedback.value = LiveFeedback(CoachOutput.Silent(NOTHING))
+        }
+    }
+
+    /** El usuario rechaza el consejo actual. Al tercero, esa regla se apaga para el. */
+    fun dismissAdvice() = evaluate.dismissCurrent()
+
     /**
      * Dispara.
      *
@@ -104,6 +126,8 @@ class ProporSession(
      */
     suspend fun capture(): Result<Capture> {
         val (shown, accepted) = evaluate.sessionAdvice()
+        val dismissed = evaluate.sessionDismissed()
+        val silence = evaluate.silenceRatio()
         val reading = _feedback.value
 
         val result = camera.capture(
@@ -126,6 +150,9 @@ class ProporSession(
                     subjectCenterX = reading.suggestedAnchor?.x?.value,
                     subjectCenterY = reading.suggestedAnchor?.y?.value,
                     visionModelVersion = vision.modelVersion,
+                    coachEnabled = _coachEnabled.value,
+                    silenceRatio = silence,
+                    adviceDismissed = dismissed,
                 ),
             )
 
@@ -155,7 +182,8 @@ class ProporSession(
             vision.readings,
             motion.tilt.onStart { emit(DeviceTilt(Degrees.ZERO, Degrees.ZERO)) },
             _guide,
-        ) { reading, tilt, guide ->
+            _coachEnabled,
+        ) { reading, tilt, guide, _ ->
             val horizon = fusion.fuse(sensor = tilt, visual = reading.horizon)
             lastTilt = horizon?.angle
             evaluate(
@@ -164,6 +192,7 @@ class ProporSession(
                 aspect = aspect,
                 profile = profile,
                 hapticsEnabled = hapticsEnabled,
+                coachEnabled = _coachEnabled.value,
             )
         }
             .onEach { _feedback.value = it }

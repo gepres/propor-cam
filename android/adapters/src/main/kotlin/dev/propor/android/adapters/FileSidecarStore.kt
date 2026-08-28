@@ -122,6 +122,9 @@ class FileSidecarStore(
         put(KEY_CAPTURED_AT, capturedAtMillis)
         put(KEY_ISO, settings.isoValue ?: JSONObject.NULL)
         put(KEY_ZOOM, settings.zoomRatio)
+        put(KEY_COACH_ON, coachEnabled)
+        put(KEY_SILENCE, silenceRatio ?: JSONObject.NULL)
+        put(KEY_DISMISSED, JSONArray(adviceDismissed.map { it.name }))
     }
 
     private fun JSONObject.toSidecar(): CaptureSidecar = CaptureSidecar(
@@ -141,6 +144,9 @@ class FileSidecarStore(
         ),
         visionModelVersion = optString(KEY_MODEL, "unversioned"),
         capturedAtMillis = optLong(KEY_CAPTURED_AT),
+        coachEnabled = optBoolean(KEY_COACH_ON, true),
+        silenceRatio = if (isNull(KEY_SILENCE)) null else optDouble(KEY_SILENCE).toFloat(),
+        adviceDismissed = optJSONArray(KEY_DISMISSED).toAdviceKeys(),
     )
 
     /** Una regla que ya no exista en el codigo se ignora, en vez de tumbar todo el historial. */
@@ -166,5 +172,8 @@ class FileSidecarStore(
         const val KEY_CAPTURED_AT = "capturedAt"
         const val KEY_ISO = "iso"
         const val KEY_ZOOM = "zoom"
+        const val KEY_COACH_ON = "coachEnabled"
+        const val KEY_SILENCE = "silenceRatio"
+        const val KEY_DISMISSED = "adviceDismissed"
     }
 }

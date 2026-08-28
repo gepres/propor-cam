@@ -6,6 +6,7 @@ import dev.propor.core.domain.advice.AdviceKey
 import dev.propor.core.domain.advice.AdviceThrottler
 import dev.propor.core.domain.advice.CoachOutput
 import dev.propor.core.domain.advice.CoachProfile
+import dev.propor.core.domain.advice.SilenceReason
 import dev.propor.core.domain.geometry.AspectRatio
 import dev.propor.core.domain.geometry.NormPoint
 import dev.propor.core.domain.guide.GuideGeometryFactory
@@ -57,13 +58,26 @@ class EvaluateLiveFrame(
 
     private var lastMagnitudeByKey = mutableMapOf<AdviceKey, Float>()
 
+    /** Consejos que el usuario descarto expresamente en este encuadre. */
+    private val dismissed = mutableSetOf<AdviceKey>()
+
+    /** Ultimo consejo emitido, para saber que se descarta cuando el usuario lo rechaza. */
+    private var lastSpoken: Advice? = null
+
     operator fun invoke(
         reading: SceneReading,
         activeGuide: GuideKind,
         aspect: AspectRatio = AspectRatio.R4_3,
         profile: CoachProfile = CoachProfile.NEUTRAL,
         hapticsEnabled: Boolean = true,
+        coachEnabled: Boolean = true,
     ): LiveFeedback {
+        // Con el coach apagado no se evalua nada. Ademas de respetar la decision del usuario,
+        // ahorra el trabajo entero del motor en cada frame.
+        if (!coachEnabled) {
+            return LiveFeedback(CoachOutput.Silent(SilenceReason.NOTHING_TO_SAY))
+        }
+
         val advice = engine.advise(reading, activeGuide, aspect, profile)
 
         // Un consejo se considera atendido cuando su gravedad baja despues de haberlo mostrado.
@@ -82,6 +96,7 @@ class EvaluateLiveFrame(
 
         if (output is CoachOutput.Speak) {
             shown += output.advice.key
+            lastSpoken = output.advice
             if (hapticsEnabled && haptics.isAvailable) haptics.play(output.signal)
         }
 
@@ -113,9 +128,39 @@ class EvaluateLiveFrame(
     fun sessionAdvice(): Pair<List<AdviceKey>, List<AdviceKey>> =
         shown.toList() to accepted.toList()
 
+    fun sessionDismissed(): List<AdviceKey> = dismissed.toList()
+
+    /**
+     * Fraccion del encuadre en la que el coach estuvo callado. Metrica de gobierno del producto.
+     */
+    fun silenceRatio(): Float = throttler.stats.silenceRatio
+
+    /**
+     * El usuario rechaza el consejo que se le esta dando ahora mismo.
+     *
+     * Es la via por la que el producto aprende que NO decir. Al tercer rechazo de la misma
+     * regla, el throttler la apaga para esta persona: si alguien rompe la misma convencion tres
+     * veces a proposito, es su estilo y no un error.
+     *
+     * Devuelve la regla descartada, o null si no habia nada que descartar.
+     */
+    fun dismissCurrent(): AdviceKey? {
+        val key = lastSpoken?.key ?: return null
+        dismissed += key
+        throttler.onDismissed(key)
+        haptics.stop()
+        lastSpoken = null
+        return key
+    }
+
+    /** Reglas que esta persona ya ha silenciado. Se persisten en su `CoachProfile`. */
+    fun mutedKeys(): Set<AdviceKey> = throttler.mutedKeys
+
     fun reset() {
         shown.clear()
         accepted.clear()
+        dismissed.clear()
+        lastSpoken = null
         lastMagnitudeByKey.clear()
         throttler.reset()
         haptics.stop()

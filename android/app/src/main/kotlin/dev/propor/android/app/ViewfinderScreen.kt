@@ -8,6 +8,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -102,6 +103,7 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
     }
 
     val guide by session.guide.collectAsStateWithLifecycle()
+    val coachOn by session.coachEnabled.collectAsStateWithLifecycle()
     val feedback by session.feedback.collectAsStateWithLifecycle()
 
     // El visor es vertical, asi que el aspecto que se pasa tambien: 3:4 y no 4:3. Las guias que
@@ -153,13 +155,22 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
 
         // Solo aparece cuando el coach tiene algo que decir. El resto del tiempo, nada: el
         // silencio es el estado normal y ocupa entre el 60 % y el 80 % de la sesion.
+        // Tocar el arco descarta el consejo. Es la via por la que el producto aprende que NO
+        // decir: al tercer rechazo de la misma regla, deja de emitirse para esta persona.
+        //
+        // El area de toque es de 56 dp aunque el trazo dibujado sea de 3: un objetivo tactil de
+        // tres pixeles no existe para una mano en movimiento.
         if (feedback.isSpeaking) {
             CoachIndicator(
                 progress = alignment,
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
-                    .width(24.dp),
+                    .width(56.dp)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) { session.dismissAdvice() },
             )
         }
 
@@ -170,6 +181,15 @@ fun ViewfinderScreen(modifier: Modifier = Modifier) {
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding(),
+        )
+
+        CoachSwitch(
+            enabled = coachOn,
+            onToggle = session::toggleCoach,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(end = 16.dp, top = 8.dp),
         )
 
         Column(
@@ -278,6 +298,52 @@ private fun GuidePicker(
                 )
             }
         }
+    }
+}
+
+/**
+ * Interruptor del coach.
+ *
+ * Apagarlo deja las guias solas: PROPOR se convierte en una camara con rejillas normal. Existe
+ * porque la pregunta que decide el producto es **si la gente lo apaga**, y sin interruptor esa
+ * pregunta no tiene respuesta posible.
+ *
+ * Discreto a proposito: es un ajuste, no una funcion. Pero visible, porque esconder el modo de
+ * apagar una asistencia insistente es la clase de truco que hace desinstalar una app.
+ */
+@Composable
+private fun CoachSwitch(
+    enabled: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                if (enabled) {
+                    ProporColors.Accent.copy(alpha = 0.22f)
+                } else {
+                    ProporColors.SurfaceRaised.copy(alpha = 0.7f)
+                },
+            )
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(if (enabled) ProporColors.Good else ProporColors.TextSecondary),
+        )
+        Text(
+            text = "COACH",
+            color = if (enabled) ProporColors.TextPrimary else ProporColors.TextSecondary,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace,
+        )
     }
 }
 

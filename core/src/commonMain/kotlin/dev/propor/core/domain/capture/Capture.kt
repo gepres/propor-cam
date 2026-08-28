@@ -75,6 +75,27 @@ data class CaptureSidecar(
     /** Version del modelo de vision que produjo la lectura. Sin esto no hay trazabilidad. */
     val visionModelVersion: String = "unversioned",
     val capturedAtMillis: Long = 0L,
+
+    /**
+     * Si el coach estaba encendido al disparar.
+     *
+     * Es **la metrica que decide el producto**: la pregunta del riesgo R-01 es si la gente sigue
+     * con el coach encendido al tercer dia, y anotarlo en cada foto la responde sola, sin
+     * encuestas ni telemetria aparte. Un carrete de una semana ya contiene la respuesta.
+     */
+    val coachEnabled: Boolean = true,
+
+    /**
+     * Fraccion del encuadre en la que el coach estuvo callado, de 0 a 1.
+     *
+     * La metrica de gobierno: por debajo de 0,60 el coach es pesado. Se anota por captura
+     * porque la media de una sesion esconde justo lo interesante — una foto dificil donde
+     * hablo mucho y veinte faciles donde callo dan un promedio que no describe ninguna.
+     */
+    val silenceRatio: Float? = null,
+
+    /** Consejos que el usuario descarto expresamente durante este encuadre. */
+    val adviceDismissed: List<AdviceKey> = emptyList(),
 ) {
     /**
      * Fraccion de consejos atendidos. Es el numerador de la metrica North Star y la senal con
