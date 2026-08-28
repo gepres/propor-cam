@@ -17,6 +17,11 @@ import dev.propor.core.domain.scene.Direction
 import dev.propor.core.domain.scene.FaceReading
 import dev.propor.core.domain.scene.SceneReading
 import dev.propor.core.domain.scene.SceneType
+import dev.propor.core.domain.vision.LineDetection
+import dev.propor.core.domain.vision.LineDetector
+import dev.propor.core.domain.vision.LumaFrame
+import dev.propor.core.domain.geometry.Degrees
+import dev.propor.core.domain.geometry.Segment
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -34,12 +39,11 @@ import kotlin.math.abs
  * del dominio, ya normalizado. Si el buffer cruzara la frontera, el nucleo tendria que saber de
  * ciclos de vida y de cierres.
  *
- * ### Que falta respecto a iOS, y conviene tenerlo presente
+ * ### El horizonte visual
  *
- * Android **no trae equivalente a `VNDetectHorizonRequest`**. Aqui el horizonte visual no existe
- * todavia: se emite `null` y la fusion del dominio (`HorizonFusion`) cae al giroscopio, que es
- * exactamente el degradado elegante para el que se diseno. La deteccion de lineas dominantes
- * llega con H4.4 y hara falta implementarla, no solo llamarla.
+ * Android no trae equivalente a `VNDetectHorizonRequest`, asi que lo aporta el `LineDetector`
+ * del nucleo: este adaptador solo le pasa el plano de luminancia y traduce el resultado. El
+ * algoritmo no vive aqui a proposito — asi iOS vera exactamente las mismas lineas.
  */
 class MlKitSceneVisionAdapter : SceneVisionPort, ImageAnalysis.Analyzer {
 
@@ -67,12 +71,19 @@ class MlKitSceneVisionAdapter : SceneVisionPort, ImageAnalysis.Analyzer {
     override val modelVersion: String = MODEL_VERSION
 
     @Volatile
-    private var enabled: Set<VisionSignal> = setOf(VisionSignal.FACES)
+    private var enabled: Set<VisionSignal> =
+        setOf(VisionSignal.FACES, VisionSignal.HORIZON, VisionSignal.LINES)
 
     private var frameCounter = 0L
 
     /** Ultima lectura util. Sostiene las senales lentas entre ejecuciones para que no salten. */
     private var lastFaces: List<FaceReading> = emptyList()
+
+    private val lineDetector = LineDetector()
+    private var lastLines: LineDetection = LineDetection()
+
+    /** Buffer del plano de luminancia, reutilizado. Copiarlo cada frame reservaria megabytes. */
+    private var lumaBuffer = ByteArray(0)
 
     override fun enableSignals(signals: Set<VisionSignal>) {
         enabled = signals
@@ -83,7 +94,8 @@ class MlKitSceneVisionAdapter : SceneVisionPort, ImageAnalysis.Analyzer {
      * MEDIR en el dispositivo y no adivinar por modelo de telefono: en gama media el usuario
      * vera un coach algo menos listo, nunca un visor lento.
      */
-    override suspend fun affordableSignals(): Set<VisionSignal> = setOf(VisionSignal.FACES)
+    override suspend fun affordableSignals(): Set<VisionSignal> =
+        setOf(VisionSignal.FACES, VisionSignal.HORIZON, VisionSignal.LINES)
 
     @SuppressLint("UnsafeOptInUsageError")
     override fun analyze(imageProxy: ImageProxy) {
@@ -104,6 +116,13 @@ class MlKitSceneVisionAdapter : SceneVisionPort, ImageAnalysis.Analyzer {
         }
 
         val rotation = imageProxy.imageInfo.rotationDegrees
+
+        // Las lineas cuestan unos 4 ms, asi que no se buscan en cada frame. Un horizonte no
+        // cambia en 100 ms, y el presupuesto es de 33 ms para TODA la vision junta.
+        if (VisionSignal.HORIZON in enabled && frameCounter % LINES_EVERY_N_FRAMES == 0L) {
+            lastLines = detectLines(imageProxy, rotation)
+        }
+
         val input = InputImage.fromMediaImage(mediaImage, rotation)
 
         // Tras rotar, el ancho y el alto se intercambian en 90 y 270 grados. Normalizar con las
@@ -146,14 +165,88 @@ class MlKitSceneVisionAdapter : SceneVisionPort, ImageAnalysis.Analyzer {
         _readings.tryEmit(
             SceneReading(
                 faces = faces,
-                // El horizonte visual no existe todavia en Android: lo aporta el sensor a
-                // traves de HorizonFusion, en el dominio.
-                horizon = null,
+                // El horizonte visual ya existe en Android. `HorizonFusion` decidira si le hace
+                // caso o se queda con el giroscopio, segun lo fiable que venga.
+                horizon = lastLines.horizon,
+                dominantLines = lastLines.lines,
+                verticalConvergence = lastLines.verticalConvergence,
                 sceneType = if (faces.isNotEmpty()) SceneType.PORTRAIT else SceneType.UNKNOWN,
                 confidence = if (analysisSucceeded) Confidence(0.9f) else Confidence(0.4f),
                 timestampMs = imageProxy.imageInfo.timestamp,
             ),
         )
+    }
+
+    /**
+     * Pasa el plano de luminancia al detector del nucleo y devuelve el resultado ya orientado
+     * como se ve en pantalla.
+     *
+     * El plano Y del YUV es exactamente lo que el detector necesita: sin conversion de color,
+     * sin copia mas alla de volcar el buffer nativo a un ByteArray reutilizado.
+     */
+    private fun detectLines(imageProxy: ImageProxy, rotation: Int): LineDetection {
+        val plane = imageProxy.planes.firstOrNull() ?: return LineDetection()
+        val buffer = plane.buffer
+        val size = buffer.remaining()
+        if (size <= 0) return LineDetection()
+
+        if (lumaBuffer.size < size) lumaBuffer = ByteArray(size)
+        buffer.rewind()
+        buffer.get(lumaBuffer, 0, size)
+
+        val frame = runCatching {
+            LumaFrame(
+                data = lumaBuffer,
+                width = imageProxy.width,
+                height = imageProxy.height,
+                rowStride = plane.rowStride,
+            )
+        }.getOrNull() ?: return LineDetection()
+
+        val raw = lineDetector.detect(frame)
+        return raw.orientedFor(rotation)
+    }
+
+    /**
+     * El detector trabaja sobre el buffer **sin rotar**, y el usuario ve la imagen rotada.
+     *
+     * Sin este ajuste, con el telefono en vertical (rotacion de 90 grados) un horizonte
+     * perfectamente recto se reportaria como una linea vertical, y el coach pediria girar el
+     * telefono noventa grados. El fallo no daria error: simplemente el consejo seria absurdo.
+     */
+    private fun LineDetection.orientedFor(rotation: Int): LineDetection {
+        if (rotation == 0) return this
+        return LineDetection(
+            lines = lines.map { it.rotated(rotation) },
+            horizon = horizon?.let { reading ->
+                val rotated = rotateInclination(reading.angle.value, rotation)
+                // Tras rotar, lo que era horizonte puede dejar de serlo. En ese caso no hay
+                // horizonte, y decirlo es mejor que inventar uno.
+                if (kotlin.math.abs(rotated) > HORIZON_LIMIT_DEG) {
+                    null
+                } else {
+                    reading.copy(angle = Degrees(rotated))
+                }
+            },
+            verticalConvergence = verticalConvergence,
+        )
+    }
+
+    private fun rotateInclination(degrees: Float, rotation: Int): Float {
+        var value = degrees + rotation
+        while (value > 90f) value -= 180f
+        while (value < -90f) value += 180f
+        return value
+    }
+
+    private fun Segment.rotated(rotation: Int): Segment =
+        Segment(from.rotated(rotation), to.rotated(rotation))
+
+    private fun NormPoint.rotated(rotation: Int): NormPoint = when (rotation) {
+        90 -> NormPoint.clamped(1f - y.value, x.value)
+        180 -> NormPoint.clamped(1f - x.value, 1f - y.value)
+        270 -> NormPoint.clamped(y.value, 1f - x.value)
+        else -> this
     }
 
     private fun Face.toDomain(imageWidth: Float, imageHeight: Float): FaceReading {
@@ -196,8 +289,12 @@ class MlKitSceneVisionAdapter : SceneVisionPort, ImageAnalysis.Analyzer {
     }
 
     private companion object {
-        const val MODEL_VERSION = "mlkit-face-fast-1"
+        const val MODEL_VERSION = "mlkit-face-fast-1+lines-1"
         const val FACE_EVERY_N_FRAMES = 2L
+        const val LINES_EVERY_N_FRAMES = 3L
+
+        /** Mas alla de esto ya no es un horizonte torcido: es otra cosa. */
+        const val HORIZON_LIMIT_DEG = 30f
         const val GAZE_THRESHOLD_DEG = 12f
     }
 }
