@@ -42,6 +42,26 @@ En `GuideGeometryFactoryTest`, con los cuatro formatos y las dos orientaciones. 
 
 Ejecuta: `./gradlew :core:jvmTest`
 
+## 3-bis. Mirarla en la pantalla, en las dos orientaciones
+
+**Este paso no es opcional y no lo sustituyen los tests.**
+
+Los tests de tabla confirman que la matematica es correcta, no que la figura se LEA bien. La
+espiral aurea paso sus catorce tests y en el visor se veia como un ovalo: se generaba en un
+rectangulo aureo apaisado y se estiraba a un encuadre 3:4.
+
+Instala en un dispositivo o emulador, selecciona la guia y mirala en vertical **y** en horizontal:
+
+```
+./gradlew :android:app:installDebug
+adb shell am start -n dev.propor.camera/dev.propor.android.app.ProporActivity
+adb exec-out screencap -p > guia.png
+```
+
+Si la guia depende de la forma del rectangulo —perpendiculares, espirales, cualquier cosa
+construida sobre la diagonal—, casi seguro necesita transponerse o recalcularse cuando el
+encuadre es vertical. Cuando encuentres uno de esos casos, anade el test que lo fije.
+
 ## 4. Icono en el sistema de diseno
 
 Vectorial, en ambas plataformas, con el mismo trazo que las demas.

@@ -52,8 +52,27 @@ Si hay que recortar alcance, se recortan reglas del motor, nunca el afinado del 
 - Tests de tabla para todo lo geometrico, en 4:3, 3:2, 16:9 y 1:1, horizontal y vertical.
 - Ningun test del throttler puede usar `sleep()`: el reloj se inyecta con `ClockPort`.
 
+## Plataforma
+
+**Android primero** (decision D1 revisada: el desarrollo es en Windows). El nucleo KMP ya sirve
+para las dos plataformas; iOS solo necesitara sus adaptadores.
+
+```
+./gradlew :android:app:installDebug
+adb shell am start -n dev.propor.camera/dev.propor.android.app.ProporActivity
+```
+
 ## Estado actual
 
-R1 en curso. Terminado y probado: geometria normalizada, las 10 guias de composicion,
-`AdviceEngine` con sus 7 reglas, `AdviceThrottler` y el guardian de arquitectura.
-Pendiente: adaptadores de camara y vision, y la capa de presentacion.
+R1 en curso. **Funcionando en dispositivo:** visor en vivo con las 10 guias de composicion
+dibujadas sobre la camara, selector de guias, captura a MediaStore.
+
+Terminado y probado: geometria normalizada, `GuideGeometryFactory`, `AdviceEngine` con sus 7
+reglas, `AdviceThrottler`, guardian de arquitectura, adaptadores de camara, haptica y sensores.
+
+Pendiente inmediato: conectar el coach al visor (falta el adaptador de vision con ML Kit), y las
+capacidades del dispositivo.
+
+**Aviso aprendido a base de fallos:** los tests de tabla verifican la matematica de una guia, no
+que se LEA bien en pantalla. Toda guia nueva se mira ademas en el emulador, en vertical y en
+horizontal.
