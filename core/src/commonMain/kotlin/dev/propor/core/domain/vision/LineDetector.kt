@@ -3,6 +3,8 @@ package dev.propor.core.domain.vision
 import dev.propor.core.domain.geometry.Confidence
 import dev.propor.core.domain.geometry.Degrees
 import dev.propor.core.domain.geometry.NormPoint
+import dev.propor.core.domain.geometry.NormRect
+import dev.propor.core.domain.geometry.NormSize
 import dev.propor.core.domain.geometry.Segment
 import dev.propor.core.domain.scene.HorizonReading
 import dev.propor.core.domain.scene.HorizonSource
@@ -46,6 +48,18 @@ data class LineDetection(
     val horizon: HorizonReading? = null,
     /** Divergencia entre las verticales de la escena. Alimenta la regla de arquitectura. */
     val verticalConvergence: Degrees? = null,
+    /**
+     * Donde se concentra el detalle de la escena, cuando se concentra en algún sitio.
+     *
+     * No es saliencia de verdad —eso necesita un modelo entrenado, y Android no trae ninguno—
+     * pero responde a la misma pregunta con lo que ya estamos calculando: donde hay bordes hay
+     * informacion, y donde se agrupan los bordes suele estar el asunto de la foto.
+     *
+     * Es null cuando el detalle esta repartido por todo el encuadre. Eso es deliberado: en una
+     * pared lisa o en una textura uniforme **no hay sujeto**, y decir que el sujeto esta en el
+     * centro geometrico seria inventarselo.
+     */
+    val salientRegion: NormRect? = null,
 )
 
 /**
@@ -98,6 +112,14 @@ class LineDetector(private val config: LineDetectorConfig = LineDetectorConfig()
 
         var edgePixels = 0
 
+        // Centroide de bordes y su dispersion, acumulados en el MISMO recorrido que ya se hace
+        // para la Hough. Sale gratis: no cuesta ni un pixel de lectura extra.
+        var weight = 0.0
+        var sumX = 0.0
+        var sumY = 0.0
+        var sumX2 = 0.0
+        var sumY2 = 0.0
+
         for (gy in 1 until gridHeight - 1) {
             for (gx in 1 until gridWidth - 1) {
                 val x = gx * step
@@ -111,6 +133,13 @@ class LineDetector(private val config: LineDetectorConfig = LineDetectorConfig()
                 if (magnitude < config.gradientThreshold) continue
 
                 edgePixels++
+
+                val w = magnitude.toDouble()
+                weight += w
+                sumX += gx * w
+                sumY += gy * w
+                sumX2 += gx.toDouble() * gx * w
+                sumY2 += gy.toDouble() * gy * w
 
                 // El gradiente apunta perpendicular al borde, que es exactamente el angulo de
                 // la normal en la parametrizacion (rho, theta). Por eso se puede votar solo
@@ -149,6 +178,9 @@ class LineDetector(private val config: LineDetectorConfig = LineDetectorConfig()
             lines = lines,
             horizon = horizonFrom(peaks, edgePixels),
             verticalConvergence = convergenceFrom(peaks),
+            salientRegion = salientRegion(
+                weight, sumX, sumY, sumX2, sumY2, gridWidth, gridHeight,
+            ),
         )
     }
 
@@ -243,6 +275,46 @@ class LineDetector(private val config: LineDetectorConfig = LineDetectorConfig()
         val b = verticals[1].inclinationDeg(config.thetaBins)
         val divergence = abs(abs(a) - abs(b))
         return if (divergence < MIN_CONVERGENCE_DEG) null else Degrees(divergence)
+    }
+
+    /**
+     * Donde se concentra el detalle, si es que se concentra.
+     *
+     * Centroide de los bordes ponderado por su fuerza, y una caja de una desviacion tipica
+     * alrededor. La dispersion es lo que decide si hay algo: con los bordes repartidos por todo
+     * el encuadre no hay sujeto, y devolver el centro geometrico seria fabricar una respuesta.
+     */
+    private fun salientRegion(
+        weight: Double,
+        sumX: Double,
+        sumY: Double,
+        sumX2: Double,
+        sumY2: Double,
+        gridWidth: Int,
+        gridHeight: Int,
+    ): NormRect? {
+        if (weight <= 0.0) return null
+
+        val meanX = sumX / weight
+        val meanY = sumY / weight
+        val varianceX = (sumX2 / weight - meanX * meanX).coerceAtLeast(0.0)
+        val varianceY = (sumY2 / weight - meanY * meanY).coerceAtLeast(0.0)
+
+        val spreadX = kotlin.math.sqrt(varianceX) / gridWidth
+        val spreadY = kotlin.math.sqrt(varianceY) / gridHeight
+
+        // Bordes repartidos por todo el encuadre: textura, no sujeto.
+        if (spreadX > MAX_SALIENT_SPREAD && spreadY > MAX_SALIENT_SPREAD) return null
+
+        val halfWidth = (spreadX.toFloat()).coerceIn(MIN_SALIENT_HALF, 0.5f)
+        val halfHeight = (spreadY.toFloat()).coerceIn(MIN_SALIENT_HALF, 0.5f)
+        val centerX = (meanX / gridWidth).toFloat()
+        val centerY = (meanY / gridHeight).toFloat()
+
+        return NormRect(
+            origin = NormPoint.clamped(centerX - halfWidth, centerY - halfHeight),
+            size = NormSize(halfWidth * 2f, halfHeight * 2f),
+        )
     }
 
     /** De (theta, rho) a un segmento normalizado, recortado contra los bordes del frame. */
@@ -361,6 +433,12 @@ class LineDetector(private val config: LineDetectorConfig = LineDetectorConfig()
 
         /** Tope del bloque de promediado: mas alla no mejora y cuesta caro. */
         const val MAX_SAMPLE_RADIUS = 3
+
+        /** Dispersion por encima de la cual el detalle esta repartido y no hay sujeto. */
+        const val MAX_SALIENT_SPREAD = 0.26
+
+        /** Semilado minimo de la region: un punto no es una region. */
+        const val MIN_SALIENT_HALF = 0.06f
 
         /** Divergencia por debajo de la cual las verticales se consideran paralelas. */
         const val MIN_CONVERGENCE_DEG = 1.5f

@@ -112,6 +112,48 @@ class LineDetectorTest {
         )
     }
 
+    // ------------------------------------------------------------------ region saliente
+
+    /**
+     * Donde se agrupan los bordes suele estar el asunto de la foto. No es saliencia de verdad
+     * —eso necesita un modelo entrenado— pero responde a la misma pregunta con lo que ya se
+     * calcula para la Hough, sin leer un pixel de mas.
+     */
+    @Test
+    fun conUnaLineaConcentrada_hayRegionDeInteres() {
+        val result = detector.detect(LumaFrame.withLine(320, 240, angleDeg = 0f))
+        val region = assertNotNull(result.salientRegion, "una linea marcada deberia concentrar detalle")
+        assertTrue(region.size.width > 0f && region.size.height > 0f)
+    }
+
+    /**
+     * En una pared lisa NO hay sujeto, y decir que esta en el centro geometrico seria
+     * fabricar una respuesta. Es preferible no saber a inventar.
+     */
+    @Test
+    fun enUnaEscenaLisa_noHayRegionDeInteres() {
+        assertNull(detector.detect(LumaFrame.flat(320, 240)).salientRegion)
+    }
+
+    @Test
+    fun conDetalleRepartidoPorTodoElEncuadre_noHayRegionDeInteres() {
+        // Tablero de ajedrez: bordes por todas partes y ningun sujeto.
+        val width = 320
+        val height = 240
+        val data = ByteArray(width * height)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val dark = ((x / 8) + (y / 8)) % 2 == 0
+                data[y * width + x] = (if (dark) 25 else 230).toByte()
+            }
+        }
+
+        assertNull(
+            detector.detect(LumaFrame(data, width, height)).salientRegion,
+            "una textura uniforme no tiene sujeto",
+        )
+    }
+
     @Test
     fun esDeterminista() {
         val frame = LumaFrame.withLine(320, 240, angleDeg = 7f)

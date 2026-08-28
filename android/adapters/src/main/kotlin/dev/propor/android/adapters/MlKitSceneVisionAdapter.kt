@@ -169,6 +169,7 @@ class MlKitSceneVisionAdapter : SceneVisionPort, ImageAnalysis.Analyzer {
                 // caso o se queda con el giroscopio, segun lo fiable que venga.
                 horizon = lastLines.horizon,
                 dominantLines = lastLines.lines,
+                salientRegion = lastLines.salientRegion,
                 verticalConvergence = lastLines.verticalConvergence,
                 sceneType = if (faces.isNotEmpty()) SceneType.PORTRAIT else SceneType.UNKNOWN,
                 confidence = if (analysisSucceeded) Confidence(0.9f) else Confidence(0.4f),
@@ -229,6 +230,27 @@ class MlKitSceneVisionAdapter : SceneVisionPort, ImageAnalysis.Analyzer {
                 }
             },
             verticalConvergence = verticalConvergence,
+            salientRegion = salientRegion?.rotated(rotation),
+        )
+    }
+
+    private fun dev.propor.core.domain.geometry.NormRect.rotated(
+        rotation: Int,
+    ): dev.propor.core.domain.geometry.NormRect {
+        if (rotation == 0) return this
+        // Se rotan las dos esquinas y se recompone la caja: al girar, el ancho y el alto se
+        // intercambian, y quedarse con el origen sin mas dejaria una caja del reves.
+        val a = origin.rotated(rotation)
+        val b = dev.propor.core.domain.geometry.NormPoint
+            .clamped(right, bottom)
+            .rotated(rotation)
+        val left = kotlin.math.min(a.x.value, b.x.value)
+        val top = kotlin.math.min(a.y.value, b.y.value)
+        return dev.propor.core.domain.geometry.NormRect.of(
+            left = left,
+            top = top,
+            width = kotlin.math.abs(b.x.value - a.x.value),
+            height = kotlin.math.abs(b.y.value - a.y.value),
         )
     }
 
