@@ -1,7 +1,6 @@
 package dev.propor.core.domain.port
 
 import dev.propor.core.domain.advice.HapticSignal
-import dev.propor.core.domain.capture.Capture
 import dev.propor.core.domain.capture.CaptureId
 import dev.propor.core.domain.capture.CaptureSidecar
 import dev.propor.core.domain.geometry.Degrees
@@ -107,7 +106,16 @@ data class StoredCapture(
  * legal.
  */
 interface PhotoStorePort {
-    suspend fun save(capture: Capture, imageBytes: ByteArray): Result<StoredCapture>
+    /**
+     * Ata el expediente a una imagen que la camara ya persistio.
+     *
+     * La imagen NO pasa por este puerto: el adaptador de camara la escribe directamente en el
+     * almacen del sistema, que es lo que hacen CameraX y AVFoundation de forma nativa. Hacerla
+     * viajar como `ByteArray` por el dominio significaria tener una foto RAW de 25 MB en memoria
+     * sin ninguna razon.
+     */
+    suspend fun attachSidecar(id: CaptureId, sidecar: CaptureSidecar): Result<Unit>
+
     suspend fun recent(limit: Int = 50): List<StoredCapture>
     suspend fun sidecarOf(id: CaptureId): CaptureSidecar?
 

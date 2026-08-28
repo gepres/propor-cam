@@ -16,3 +16,5 @@ dependencyResolutionManagement {
 }
 
 include(":core")
+include(":android:adapters")
+include(":android:app")

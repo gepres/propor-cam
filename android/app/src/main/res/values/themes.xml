@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Fondo negro puro desde el arranque: el visor es sagrado y cualquier destello claro
+        en el arranque en frio rompe la adaptacion del ojo, sobre todo de noche.
+    -->
+    <style name="Theme.Propor" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF000000</item>
+        <item name="android:statusBarColor">#FF000000</item>
+        <item name="android:navigationBarColor">#FF000000</item>
+    </style>
+</resources>

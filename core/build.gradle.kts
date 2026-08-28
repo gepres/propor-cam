@@ -1,13 +1,18 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.android.library)
 }
 
-// Los targets de Apple solo se compilan en macOS. En Windows y Linux el nucleo
-// se construye y se prueba entero sobre la JVM: es Kotlin puro, sin frameworks.
+// Los targets de Apple solo se compilan en macOS. En Windows y Linux el nucleo se construye y
+// se prueba entero sobre la JVM: es Kotlin puro, sin frameworks.
 val hostIsMac = System.getProperty("os.name").startsWith("Mac")
 
 kotlin {
     jvm {
+        compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
+    }
+
+    androidTarget {
         compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
     }
 
@@ -27,6 +32,20 @@ kotlin {
             implementation(kotlin("test"))
             implementation(libs.kotlinx.coroutines.test)
         }
+    }
+}
+
+android {
+    namespace = "dev.propor.core"
+    compileSdk = libs.versions.compileSdk.get().toInt()
+
+    defaultConfig {
+        minSdk = libs.versions.minSdk.get().toInt()
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 }
 
