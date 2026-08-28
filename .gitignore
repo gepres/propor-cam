@@ -6,3 +6,6 @@ local.properties
 .DS_Store
 xcuserdata/
 *.hprof
+
+# APK de distribucion: se genera, no se versiona
+dist/
