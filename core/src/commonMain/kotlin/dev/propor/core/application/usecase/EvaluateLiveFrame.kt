@@ -1,5 +1,6 @@
 package dev.propor.core.application.usecase
 
+import dev.propor.core.domain.advice.Advice
 import dev.propor.core.domain.advice.AdviceEngine
 import dev.propor.core.domain.advice.AdviceKey
 import dev.propor.core.domain.advice.AdviceThrottler
@@ -85,11 +86,20 @@ class EvaluateLiveFrame(
         }
 
         val subject = reading.mainSubject?.center
-        val anchors = GuideGeometryFactory.geometryFor(activeGuide, aspect).anchors
-        val suggested = if (subject != null && anchors.isNotEmpty()) {
-            anchors.minByOrNull { it.distanceTo(subject) }
-        } else {
-            null
+
+        // El ancla se enciende SOLO cuando el consejo activo trata de donde esta el sujeto.
+        //
+        // Antes se destacaba siempre que se detectaba un sujeto, aunque el coach estuviera
+        // callado: aparecia un punto senalando un sitio sin que nada lo hubiera provocado y sin
+        // decir por que. Es ruido con forma de consejo, y contradice que el silencio sea el
+        // estado normal. Lo detecto un usuario preguntando "ese punto que me quiere decir",
+        // que es la mejor prueba de que un elemento de interfaz no se explica solo.
+        //
+        // Con el horizonte torcido no se destaca nada: el problema no es donde esta el sujeto.
+        val suggested = when {
+            output !is CoachOutput.Speak -> null
+            output.advice is Advice.SubjectCentered -> (output.advice as Advice.SubjectCentered).suggested
+            else -> null
         }
 
         return LiveFeedback(

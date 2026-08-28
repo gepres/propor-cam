@@ -129,6 +129,37 @@ class EvaluateLiveFrameTest {
         assertEquals(1, f.haptics.stopCount)
     }
 
+    /**
+     * El ancla ambar solo se enciende cuando el consejo va DE la posicion del sujeto.
+     *
+     * Antes se destacaba siempre que habia un sujeto detectado, aunque el coach estuviera
+     * callado. Un usuario lo vio y pregunto "ese punto que me quiere decir": si hay que
+     * preguntarlo, el elemento no se explica solo y sobra.
+     */
+    @Test
+    fun conElHorizonteTorcido_noSeSenalaNingunAncla() {
+        val f = Fixture()
+
+        f.useCase(sceneWithTilt(7f), GuideKind.THIRDS)
+        f.clock.advance(450)
+        val feedback = f.useCase(sceneWithTilt(7f), GuideKind.THIRDS)
+
+        assertTrue(feedback.isSpeaking, "deberia estar avisando del horizonte")
+        assertEquals(
+            null,
+            feedback.suggestedAnchor,
+            "el problema es la inclinacion, no donde esta el sujeto: no hay nada que senalar",
+        )
+    }
+
+    @Test
+    fun enSilencio_tampocoSeSenalaNada() {
+        val f = Fixture()
+        val feedback = f.useCase(SceneReading(), GuideKind.THIRDS)
+        assertTrue(!feedback.isSpeaking)
+        assertEquals(null, feedback.suggestedAnchor)
+    }
+
     @Test
     fun elAlineamientoEsUnoCuandoNoHaySujeto() {
         val f = Fixture()
